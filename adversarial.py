@@ -4,9 +4,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+from torch.utils.data import TensorDataset, Subset, ConcatDataset, DataLoader
 
 from train_resnet import get_cifar10_data
 from resnet import ResNet18
+from pixelcnnpp.density import density_generator
 
 def fgsm(image, epsilon, data_grad):
 
@@ -72,6 +74,7 @@ def do_adversarial(args):
 
     model = ResNet18().to(device)
     model.load_state_dict(torch.load(args.resnet_fname))
+    model.eval()
 
     _, _, test_loader = get_cifar10_data(bs=args.bs, as_loader=True)
     adversarials, original_classes = get_adversarial_images(
@@ -81,20 +84,47 @@ def do_adversarial(args):
     to_save = {'adversarials': adversarials, 'original_classes': original_classes}
     torch.save(to_save, args.save_fname)
 
+def do_projection(args):
+
+    adversarials = torch.load(args.adversarials_fname)['adversarials']
+    adversarials = torch.from_numpy(adversarials)
+
+    adv_loader = DataLoader(
+        adversarials, batch_size=args.bs, shuffle=False,
+        num_workers=0, pin_memory=True, drop_last=False,
+    )
+
+    density = density_generator()
+
+    for x in adv_loader:
+        
+        x = x.cuda()
+        x = x * 2. - 1.
+        print(torch.min(x), torch.max(x))
+        loss = -density(x)
+        print(loss)
+
+    print(adversarials.shape)
+
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epsilon', type=float, required=True)
-    parser.add_argument('--num-update-steps', type=int, required=True)
-    parser.add_argument('--num-images', type=int, required=True)
+    parser.add_argument('--do-projection', action='store_true')
     parser.add_argument('--save-fname', type=str, required=True)
+    parser.add_argument('--epsilon', type=float, required=False)
+    parser.add_argument('--num-update-steps', type=int, required=False)
+    parser.add_argument('--num-images', type=int, required=False)
+    parser.add_argument('--adversarials-fname', type=str, required=False)
     parser.add_argument('--resnet-fname', type=str, required=False,
         default='./logdirs/cifar10-40k_best.pt')
     parser.add_argument('--bs', type=int, required=False, default=256)
     args = parser.parse_args()
 
     print(args)
-    do_adversarial(args)
+    if args.do_projection:
+        do_projection(args)
+    else:
+        do_adversarial(args)
         
 if __name__ == '__main__':
     main()
