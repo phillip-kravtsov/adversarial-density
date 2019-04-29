@@ -1,1 +1,3 @@
-python adversarial.py --do-projection --num-update-steps 10 --num-images 1000 --epsilon 0.0001 --adversarials-fname data/adversarial/untargeted_step10_eps0.0001.pt --save-fname data/projected/untargeted_step10_eps0.0001.pt --bs 16
+python adversarial.py --do-projection --num-update-steps 10 --epsilon 0.0001 --adversarials-fname data/adversarial/untargeted_step10_eps0.0001.pt --save-fname data/projected/untargeted_advstep10_adveps0.0001_step10_eps0.0001.pt --bs 10
+python adversarial.py --do-projection --num-update-steps 10 --epsilon 0.001 --adversarials-fname data/adversarial/untargeted_step10_eps0.001.pt --save-fname data/projected/untargeted_advstep10_adveps0.001_step10_eps0.001.pt --bs 10
+python adversarial.py --do-projection --num-update-steps 10 --epsilon 0.01 --adversarials-fname data/adversarial/untargeted_step10_eps0.01.pt --save-fname data/projected/untargeted_advstep10_adveps0.01_step10_eps0.01.pt --bs 10

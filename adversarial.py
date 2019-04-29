@@ -10,11 +10,20 @@ from train_resnet import get_cifar10_data
 from resnet import ResNet18
 from pixelcnnpp.density import density_generator
 
+def assert_max_min(tensor, maximum, minimum):
+    
+    tensor_max, tensor_min = torch.max(tensor), torch.min(tensor)
+    middle = (maximum + minimum) / 2.
+    
+    assert tensor_max <= maximum and tensor_max > middle
+    assert tensor_min >= minimum and tensor_min < middle
+
 def fgsm(image, epsilon, data_grad):
 
+    assert_max_min(image, 1., -1.)
     sign_data_grad = data_grad.sign()
     perturbed_image = image + epsilon * sign_data_grad
-    perturbed_image = torch.clamp(perturbed_image, 0, 1)
+    perturbed_image = torch.clamp(perturbed_image, -1, 1)
 
     return perturbed_image
 
@@ -30,6 +39,8 @@ def get_adversarial_images(model, device, test_loader, num_update_steps,
 
     for data, target in test_loader:
 
+        data = 2. * data - 1.
+        assert_max_min(data, 1., -1.)
         data, target = data.to(device), target.to(device)
         data.requires_grad = True
 
@@ -84,10 +95,42 @@ def do_adversarial(args):
     to_save = {'adversarials': adversarials, 'original_classes': original_classes}
     torch.save(to_save, args.save_fname)
 
+def get_projected_images(density, device, loader, num_update_steps, epsilon):
+
+    projections = []
+
+    for data in loader:
+
+        assert_max_min(data, 1., -1.)
+        data = data.to(device)
+        data.requires_grad = True
+
+        print('Starting new batch of projections ...')
+
+        for _ in range(num_update_steps):
+            
+            data = torch.cuda.FloatTensor(data.detach())
+            data.requires_grad = True
+            loss = -torch.mean(density(data))
+
+            print(loss.item())
+
+            data.grad = None
+            loss.backward()
+            data_grad = data.grad.data
+            data = fgsm(data, epsilon, data_grad)
+
+        projections.append(data.cpu().detach().numpy())
+
+    projections = np.concatenate(projections)
+
+    return projections
+
 def do_projection(args):
 
     adversarials = torch.load(args.adversarials_fname)['adversarials']
     adversarials = torch.from_numpy(adversarials)
+    assert_max_min(adversarials, 1., -1.)
 
     adv_loader = DataLoader(
         adversarials, batch_size=args.bs, shuffle=False,
@@ -96,15 +139,10 @@ def do_projection(args):
 
     density = density_generator()
 
-    for x in adv_loader:
-        
-        x = x.cuda()
-        x = x * 2. - 1.
-        print(torch.min(x), torch.max(x))
-        loss = -density(x)
-        print(loss)
-
-    print(adversarials.shape)
+    projected = get_projected_images(
+        density, torch.device('cuda'), adv_loader, args.num_update_steps, args.epsilon
+    )
+    torch.save(projected, args.save_fname)
 
 def main():
 
