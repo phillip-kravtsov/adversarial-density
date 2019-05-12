@@ -75,6 +75,8 @@ def get_adversarial_images(model, device, test_loader, num_update_steps,
                 data = fgsm(data, epsilon, data_grad)
             elif attack_type == 'l2':
                 data = l2_adv(data, epsilon, data_grad)
+            else:
+                raise NotImplementedError
 
         adversarials.append(data.squeeze().cpu().detach().numpy())
         original_classes.append(target.cpu().detach().numpy())
@@ -101,7 +103,7 @@ def do_adversarial(args):
     _, _, test_loader = get_cifar10_data(bs=args.bs, as_loader=True)
     adversarials, original_classes = get_adversarial_images(
         model, torch.device('cuda'), test_loader, args.num_update_steps,
-        args.num_images, args.epsilon, targeted=False,
+        args.num_images, args.epsilon, targeted=False, attack_type=args.attack_type
     )
     to_save = {'adversarials': adversarials, 'original_classes': original_classes}
     torch.save(to_save, args.save_fname)
@@ -167,7 +169,7 @@ def main():
     parser.add_argument('--resnet-fname', type=str, required=False,
         default='./logdirs/cifar10-40k_best.pt')
     parser.add_argument('--bs', type=int, required=False, default=256)
-    parser.add_argument('--attack-typ', type=str, required=False, default='fgsm')
+    parser.add_argument('--attack-type', type=str, required=False, default='fgsm')
     args = parser.parse_args()
 
     print(args)
