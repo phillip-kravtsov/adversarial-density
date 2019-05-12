@@ -4,7 +4,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.nn.utils import weight_norm as wn
-from .utils import *
+try:
+    from .utils import *
+except ImportError:
+    from utils import *
 import numpy as np
 
 class nin(nn.Module):

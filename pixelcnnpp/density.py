@@ -18,7 +18,7 @@ class DensityAcquisitionEngine():
         self.model = model
     def get_nll(self, ims):
         ls = self.model(ims)
-        return discretized_mix_logistic_loss(ims, ls)
+        return discretized_mix_logistic_loss(ims, ls, per_sample=True)
         
 def get_model(load_path, device, args=None):
     if args is None:

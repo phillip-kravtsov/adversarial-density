@@ -27,8 +27,16 @@ def fgsm(image, epsilon, data_grad):
 
     return perturbed_image
 
+def l2_adv(image, epsilon, data_grad):
+    
+    assert_max_min(image, 1., -1.)
+    perturbed_image = image + epsilon * data_grad
+    perturbed_image = torch.clamp(perturbed_image, -1, 1)
+
+    return perturbed_image
+
 def get_adversarial_images(model, device, test_loader, num_update_steps, 
-        num_images, epsilon, targeted=False):
+        num_images, epsilon, attack_type,targeted=False):
 
     assert 1 <= num_images <= 10000
 
@@ -63,7 +71,10 @@ def get_adversarial_images(model, device, test_loader, num_update_steps,
             model.zero_grad()
             loss.backward()
             data_grad = data.grad.data
-            data = fgsm(data, epsilon, data_grad)
+            if attack_type == 'fgsm':
+                data = fgsm(data, epsilon, data_grad)
+            elif attack_type == 'l2':
+                data = l2_adv(data, epsilon, data_grad)
 
         adversarials.append(data.squeeze().cpu().detach().numpy())
         original_classes.append(target.cpu().detach().numpy())
@@ -156,6 +167,7 @@ def main():
     parser.add_argument('--resnet-fname', type=str, required=False,
         default='./logdirs/cifar10-40k_best.pt')
     parser.add_argument('--bs', type=int, required=False, default=256)
+    parser.add_argument('--attack-typ', type=str, required=False, default='fgsm')
     args = parser.parse_args()
 
     print(args)

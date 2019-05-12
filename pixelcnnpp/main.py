@@ -5,15 +5,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import numpy as np
+from model import *
+from glob import glob
 from torch.optim import lr_scheduler
 from torchvision import datasets, transforms, utils
 from tensorboardX import SummaryWriter
-from . import utils
-from . import layers
+try:
+    from . import utils
+    from . import layers
+except ImportError:
+    import utils
+    import layers
 from PIL import Image
 
 parser = argparse.ArgumentParser()
 # data I/O
+
 parser.add_argument('-i', '--data_dir', type=str,
                     default='data', help='Location for the dataset')
 parser.add_argument('-o', '--save_dir', type=str, default='models',
@@ -27,6 +35,10 @@ parser.add_argument('-t', '--save_interval', type=int, default=10,
 parser.add_argument('-r', '--load_params', type=str, default=None,
                     help='Restore training from previous model checkpoint?')
 # model
+parser.add_argument('-a', '--adversarial', type=bool, default=False,
+                    help='Whether to train against adversarial perturbations')
+parser.add_argument('-c', '--inf_norm', type=bool, default=True,
+                    help='If true, train against l_infinity norm. Otherwise, train on L2')
 parser.add_argument('-q', '--nr_resnet', type=int, default=5,
                     help='Number of residual blocks per stage of the model')
 parser.add_argument('-n', '--nr_filters', type=int, default=160,
@@ -37,7 +49,7 @@ parser.add_argument('-l', '--lr', type=float,
                     default=0.0002, help='Base learning rate')
 parser.add_argument('-e', '--lr_decay', type=float, default=0.999995,
                     help='Learning rate decay, applied every step of the optimization')
-parser.add_argument('-b', '--batch_size', type=int, default=64,
+parser.add_argument('-b', '--batch_size', type=int, default=16,
                     help='Batch size during training per GPU')
 parser.add_argument('-x', '--max_epochs', type=int,
                     default=5000, help='How many epochs to run in total?')
@@ -50,8 +62,13 @@ torch.manual_seed(args.seed)
 np.random.seed(args.seed)
 
 model_name = 'pcnn_lr:{:.5f}_nr-resnet{}_nr-filters{}'.format(args.lr, args.nr_resnet, args.nr_filters)
-assert not os.path.exists(os.path.join('runs', model_name)), '{} already exists!'.format(model_name)
-writer = SummaryWriter(log_dir=os.path.join('runs', model_name))
+if os.path.exists(os.path.join('runs', model_name)):
+    paths = glob(os.path.join('runs', model_name + '*'))
+    num = max([int(path.split('_')[-1]) for path in paths])
+    model_name = model_name + '_' + str(num+1)
+else:
+    model_name = model_name + '_0'
+    writer = SummaryWriter(log_dir=os.path.join('runs', model_name))
 
 sample_batch_size = 25
 obs = (1, 28, 28) if 'mnist' in args.dataset else (3, 32, 32)
@@ -108,6 +125,36 @@ def sample(model):
             data[:, :, i, j] = out_sample.data[:, :, i, j]
     return data
 
+def fgsm(image, epsilon, data_grad):
+
+    sign_data_grad = data_grad.sign()
+    perturbed_image = image + epsilon * sign_data_grad
+    perturbed_image = torch.clamp(perturbed_image, -1, 1)
+
+    return perturbed_image
+
+
+def get_adversarial_batch(input, model, loss_op, epsilons, num_steps=10):
+
+    batch = [input]
+    for epsilon in epsilons:
+        data = input.detach()
+        for _ in range(num_steps):
+            data = torch.cuda.FloatTensor(data.detach())
+            data.requires_grad = True
+            output = model(data)
+            loss = loss_op(data, output)
+
+            data.grad = None
+            model.zero_grad()
+            loss.backward()
+            data_grad = data.grad.data
+            data = fgsm(data, epsilon, data_grad)
+        batch.append(data)
+    batch = torch.cat(batch)
+    return batch
+
+
 print('starting training')
 writes = 0
 for epoch in range(args.max_epochs):
@@ -118,13 +165,15 @@ for epoch in range(args.max_epochs):
     model.train()
     for batch_idx, (input,_) in enumerate(train_loader):
         input = input.cuda(async=True)
-        input = Variable(input)
-        output = model(input)
-        loss = loss_op(input, output)
+        if args.adversarial:
+            adv_input = get_adversarial_batch(input, model=model, loss_op=loss_op, epsilons=[0.001, 0.01, 0.1])
+        adv_input = adv_input.cuda(async=True)
+        output = model(adv_input)
+        loss = loss_op(adv_input, output)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        train_loss += loss.data[0]
+        train_loss += loss.item()
         if (batch_idx +1) % args.print_every == 0 : 
             deno = args.print_every * args.batch_size * np.prod(obs) * np.log(2.)
             writer.add_scalar('train/bpd', (train_loss / deno), writes)
@@ -147,7 +196,7 @@ for epoch in range(args.max_epochs):
         input_var = Variable(input)
         output = model(input_var)
         loss = loss_op(input_var, output)
-        test_loss += loss.data[0]
+        test_loss += loss.item()
         del loss, output
 
     deno = batch_idx * args.batch_size * np.prod(obs) * np.log(2.)

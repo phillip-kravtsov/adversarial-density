@@ -3,8 +3,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from .layers import *
-from .utils import *
+try:
+    from .layers import *
+    from .utils import *
+except ImportError:
+    from layers import *
+    from utils import *
 import numpy as np
 
 class PixelCNNLayer_up(nn.Module):
@@ -100,6 +104,7 @@ class PixelCNN(nn.Module):
         num_mix = 3 if self.input_channels == 1 else 10
         self.nin_out = nin(nr_filters, num_mix * nr_logistic_mix)
         self.init_padding = None
+        self.new_init_padding = None
 
 
     def forward(self, x, sample=False):
@@ -116,7 +121,14 @@ class PixelCNN(nn.Module):
             x = torch.cat((x, padding), 1)
 
         ###      UP PASS    ###
-        x = x if sample else torch.cat((x, self.init_padding), 1)
+        if self.new_init_padding is None and self.init_padding.size(0) != x.size(0):
+            xs = [int(y) for y in x.size()]
+            padding = Variable(torch.ones(xs[0], 1, xs[2], xs[3]), requires_grad=False)
+            self.new_init_padding = padding.cuda() if x.is_cuda else padding
+            
+        padding_to_use = self.init_padding if self.init_padding.size(0) == x.size(0) else self.new_init_padding
+
+        x = x if sample else torch.cat((x, padding_to_use), 1)
         u_list  = [self.u_init(x)]
         ul_list = [self.ul_init[0](x) + self.ul_init[1](x)]
         for i in range(3):
