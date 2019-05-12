@@ -134,7 +134,7 @@ def fgsm(image, epsilon, data_grad):
     return perturbed_image
 
 
-def get_adversarial_batch(input, model, loss_op, epsilons, num_steps=10):
+def get_adversarial_batch(input, model, loss_op, epsilons, num_steps=1):
 
     batch = [input]
     for epsilon in epsilons:
@@ -149,27 +149,27 @@ def get_adversarial_batch(input, model, loss_op, epsilons, num_steps=10):
             model.zero_grad()
             loss.backward()
             data_grad = data.grad.data
-            data = fgsm(data, epsilon, data_grad)
+            data = fgsm(data, epsilon/num_steps, data_grad)
         batch.append(data)
     batch = torch.cat(batch)
     return batch
 
 
 print('starting training')
+print(len(train_loader))
 writes = 0
 for epoch in range(args.max_epochs):
     model.train(True)
-    torch.cuda.synchronize()
+    #torch.cuda.synchronize()
     train_loss = 0.
     time_ = time.time()
     model.train()
     for batch_idx, (input,_) in enumerate(train_loader):
-        input = input.cuda(async=True)
+        input = input.cuda()
         if args.adversarial:
-            adv_input = get_adversarial_batch(input, model=model, loss_op=loss_op, epsilons=[0.001, 0.01, 0.1])
-        adv_input = adv_input.cuda(async=True)
-        output = model(adv_input)
-        loss = loss_op(adv_input, output)
+            input = get_adversarial_batch(input, model=model, loss_op=loss_op, epsilons=[0.001, 0.01, 0.1])
+        output = model(input)
+        loss = loss_op(input, output)
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
@@ -177,7 +177,8 @@ for epoch in range(args.max_epochs):
         if (batch_idx +1) % args.print_every == 0 : 
             deno = args.print_every * args.batch_size * np.prod(obs) * np.log(2.)
             writer.add_scalar('train/bpd', (train_loss / deno), writes)
-            print('loss : {:.4f}, time : {:.4f}'.format(
+            print('batch idx: {} loss : {:.4f}, time : {:.4f}'.format(
+                batch_idx+1,
                 (train_loss / deno), 
                 (time.time() - time_)))
             train_loss = 0.
@@ -188,11 +189,11 @@ for epoch in range(args.max_epochs):
     # decrease learning rate
     scheduler.step()
     
-    torch.cuda.synchronize()
+    #torch.cuda.synchronize()
     model.eval()
     test_loss = 0.
     for batch_idx, (input,_) in enumerate(test_loader):
-        input = input.cuda(async=True)
+        input = input.cuda()
         input_var = Variable(input)
         output = model(input_var)
         loss = loss_op(input_var, output)

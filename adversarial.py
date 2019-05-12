@@ -72,9 +72,9 @@ def get_adversarial_images(model, device, test_loader, num_update_steps,
             loss.backward()
             data_grad = data.grad.data
             if attack_type == 'fgsm':
-                data = fgsm(data, epsilon, data_grad)
+                data = fgsm(data, epsilon/num_update_steps, data_grad)
             elif attack_type == 'l2':
-                data = l2_adv(data, epsilon, data_grad)
+                data = l2_adv(data, epsilon/num_update_steps, data_grad)
             else:
                 raise NotImplementedError
 
