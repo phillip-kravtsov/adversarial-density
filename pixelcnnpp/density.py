@@ -42,6 +42,17 @@ def density_generator():
         return dae.get_nll(ims)
     return get_nlls
 
+def adversarial_decode(x, epsilon):
+    load_path = 'pixelcnnpp/params/pcnn_lr.0.00040_nr-resnet5_nr-filters160_889.pth' 
+    device = torch.device('cuda:0')
+    model = get_model(load_path, device)
+    x_new = x.detach().clone()
+    for i in range(x_new.size(0)):
+        for j in range(x_new.size(1)):
+            for k in range(x_new.size(2)):
+                pixel = x[i, j, k]
+                output = model(x_new)
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

@@ -11,6 +11,8 @@ from train_resnet import get_cifar10_data
 from resnet import ResNet18
 from pixelcnnpp.density import density_generator
 
+
+
 CIFAR_CLASSES = (
     'airplane',
     'automobile',
@@ -24,7 +26,7 @@ CIFAR_CLASSES = (
     'truck',
 )
 
-def get_real_adv_proj(eps):
+def get_real_adv_proj(eps, num_update_steps, attack_type, include_projected=True):
 
     _, _, test = get_cifar10_data(bs=256, as_loader=True)
     images, labels = [], []
@@ -33,15 +35,29 @@ def get_real_adv_proj(eps):
         labels.append(labels_)
     test_images, test_labels = torch.cat(images).numpy(), torch.cat(labels).numpy()
 
-    adversarial_images = torch.load(
-        './data/adversarial/untargeted_step10_eps{}.pt'.format(eps)
-    )['adversarials']
+    if attack_type == 'deepfool':
+        adversarial_images = torch.load(
+            './data/adversarial/{}_step{}.pt'.format(attack_type, num_update_steps)
+        )['adversarials'][:999, :, :].reshape(333, 3, 32, 32)
+    else:
+        adversarial_images = torch.load(
+            './data/adversarial/{}_step10_eps{}.pt'.format(attack_type, eps)
+        )['adversarials']
 
-    projected_images = torch.load(
-        './data/projected/untargeted_advstep10_adveps{0}_step10_eps{0}.pt'.format(eps)
-    )
+    if include_projected:
+        if attack_type == 'deepfool':
+            projected_images = torch.load(
+                './data/projected/{}_advstep{}_step10_eps0.01.pt'.format(attack_type, num_update_steps)
+            )
 
-    return test_images, test_labels, adversarial_images, projected_images
+        else:
+            projected_images = torch.load(
+                './data/projected/{}_advstep10_adveps{}_step10_eps{}.pt'.format(attack_type, eps, eps)
+            )
+
+        return test_images, test_labels, adversarial_images, projected_images
+    else:
+        return test_images, test_labels, adversarial_images
     
 
 def do_samples(args):
@@ -51,7 +67,7 @@ def do_samples(args):
     model.eval()
 
     test_images, test_labels, adversarial_images, projected_images = \
-        get_real_adv_proj(args.eps)
+        get_real_adv_proj(args.eps, args.num_update_steps)
 
     def get_label(img):
         assert img.shape == (3, 32, 32)
@@ -100,11 +116,42 @@ def do_samples(args):
 
         plt.savefig('figs/samples_eps{}_{}.png'.format(args.eps, i))
 
+def do_flow_histogram(args):
+    test_images, _, adversarial_images= \
+        get_real_adv_proj(args.eps, args.num_update_steps, args.attack_type, False)
+    test_images = test_images[:adversarial_images.shape[0]]
+    test_images = 2. * test_images - 1.
+    test_images = np.transpose(test_images, (0, 2, 3, 1))
+    adversarial_images = np.transpose(adversarial_images, (0, 2, 3, 1))
+    import sys
+    sys.path.insert(0, './glow/')
+    from glow import density as flow_density
+    density = flow_density.get_bits_fn(50)
+
+    real_densities = []
+    adversarial_densities = []
+    
+    for i in range(10):
+        real_densities.append(density(test_images[i*50:(i+1)*50]))
+        adversarial_densities.append(density(adversarial_images[i*50:(i+1)*50]))
+    real_densities = np.concatenate(real_densities)
+    adversarial_densities = np.concatenate(adversarial_densities)
+    plt.figure()
+    #plt.hist(
+    #    [real_densities, adversarial_densities],
+    #    label=['original', 'adversarial'],
+    #    [real_densities, adversarial_densities],
+    #    label=['original', 'adversarial'],
+    #)
+    plt.hist(real_densities, label='original', alpha=0.4)
+    plt.hist(adversarial_densities, label='adversarial', alpha=0.4)
+    plt.legend()
+    plt.savefig('figs/flow_histogram_eps{}.png'.format(args.eps))
 
 def do_histogram(args):
 
     test_images, _, adversarial_images, projected_images = \
-        get_real_adv_proj(args.eps)
+        get_real_adv_proj(args.eps, args.num_update_steps, args.attack_type)
 
     test_images = test_images[:adversarial_images.shape[0]]
 
@@ -138,16 +185,23 @@ def do_histogram(args):
     print(sum(real_densities) / len(real_densities))
     print(sum(adversarial_densities) / len(adversarial_densities))
     print(sum(projected_densities) / len(projected_densities))
+
     plt.figure()
-    plt.hist(
-        [real_densities, adversarial_densities, projected_densities],
-        label=['original', 'adversarial', 'projected'],
-    )
-    #plt.hist(real_densities, label='original', alpha=0.4)
-    #plt.hist(adversarial_densities, label='adversarial', alpha=0.4)
-    #plt.hist(projected_densities, label='projected', alpha=0.4)
+    #plt.hist(
+    #    [real_densities, adversarial_densities, projected_densities],
+    #    label=['original', 'adversarial', 'projected'],
+    #)
+    real_densities = np.array(real_densities) / (32. * 32. * 3.)
+    adversarial_densities = np.array(adversarial_densities) / (32. * 32. * 3.)
+    projected_densities = np.array(projected_densities) / (32. * 32. * 3.)
+    plt.hist(real_densities, label='original', alpha=0.4)
+    plt.hist(adversarial_densities, label='adversarial', alpha=0.4)
+    plt.hist(projected_densities, label='projected', alpha=0.4)
     plt.legend()
-    plt.savefig('figs/histogram_eps{}.png'.format(args.eps))
+    if args.attack_type == 'deepfool':
+        plt.savefig('figs/pixelcnn_histogram_{}_attacksteps{}_eps0.01.png'.format(args.attack_type, args.num_update_steps))
+    else:
+        plt.savefig('figs/pixelcnn_histogram_{}_eps{}.png'.format(args.attack_type, args.eps))
 
 
 def do_statistics(args):
@@ -157,7 +211,7 @@ def do_statistics(args):
     model.eval()
 
     test_images, test_labels, adversarial_images, projected_images = \
-        get_real_adv_proj(args.eps)
+        get_real_adv_proj(args.eps, args.num_update_steps, args.attack_type)
 
     test_images = test_images[:adversarial_images.shape[0]]
     test_labels = test_labels[:adversarial_images.shape[0]]
@@ -198,6 +252,8 @@ def main():
         default='./logdirs/cifar10-40k_best.pt')
     parser.add_argument('--n-samples', type=int, required=False, default=10)
     parser.add_argument('--eps', type=float, required=False, default=0.0001)
+    parser.add_argument('--num-update-steps', type=int, required=False, default=10)
+    parser.add_argument('--attack-type', type=str, required=False)
     args = parser.parse_args()
 
     if args.to_show == 'samples':
@@ -206,6 +262,8 @@ def main():
         do_histogram(args)
     elif args.to_show == 'statistics':
         do_statistics(args)
+    elif args.to_show == 'flow_histogram':
+        do_flow_histogram(args)
     else:
         raise RuntimeError("Invalid argument for 'to_show'")
 
